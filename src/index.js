@@ -24,7 +24,7 @@ async function handleSend(request, env) {
     return json({ ok: false, error: "Invalid JSON" }, 400, cors);
   }
 
-  const { emailType, firstName, lastName, email, telephone, message, meta } = body || {};
+  const { emailType, firstName, lastName, email, telephone, message } = body || {};
 
   const missing = [];
   if (!env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
@@ -40,13 +40,7 @@ async function handleSend(request, env) {
     `Phone: ${telephone || ""}`,
     ``,
     `Message:`,
-    `${message || ""}`,
-    ``,
-    `--- meta ---`,
-    `IP: ${meta?.ip || ""}`,
-    `UA: ${meta?.ua || ""}`,
-    `Referer: ${meta?.referer || ""}`,
-    `Timestamp: ${meta?.timestamp || ""}`
+    `${message || ""}`
   ].join("\n");
 
   const html = `
@@ -57,6 +51,7 @@ async function handleSend(request, env) {
     <p><strong>Phone:</strong> ${escapeHtml(telephone || "")}</p>
     <hr/>
     <p><strong>Message</strong></p>
+    <pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(message || "")}</pre>
   `;
 
   const resendRes = await fetch("https://api.resend.com/emails", {
