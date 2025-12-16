@@ -1,26 +1,112 @@
 export default {
   async fetch(request, env) {
-    const headers = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST,OPTIONS", "Access-Control-Allow-Headers": "Content-Type,X-Auth" };
-    if (request.method === "OPTIONS") return new Response("ok", { headers });
-    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers });
+    if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders() });
 
-    const auth = request.headers.get("X-Auth") || "";
-    if (!env.WORKER_SHARED_SECRET || auth !== env.WORKER_SHARED_SECRET) return new Response("Unauthorized", { status: 401, headers });
+    const url = new URL(request.url);
 
-    let payload;
-    try { payload = await request.json(); } catch { return new Response("Invalid JSON", { status: 400, headers }); }
+    // Service binding request in our Pages Function used: "https://email/send"
+    // so we handle path "/send"
+    if (request.method === "POST" && url.pathname === "/send") {
+      return await handleSend(request, env);
+    }
 
-    const { emailType, firstName, lastName, email, telephone, message, page, ip, userAgent, recaptcha } = payload || {};
-    if (!env.RESEND_API_KEY) return new Response("Missing RESEND_API_KEY", { status: 500, headers });
-    if (!env.EMAIL_TO || !env.EMAIL_FROM) return new Response("Missing EMAIL_TO or EMAIL_FROM", { status: 500, headers });
-
-    const safe = (v) => (typeof v === "string" ? v.trim() : "");
-    const subject = `Contact: ${safe(emailType) || "General"} — ${safe(firstName)} ${safe(lastName)}`.trim();
-    const text = [`Type: ${safe(emailType)}`, `Name: ${safe(firstName)} ${safe(lastName)}`.trim(), `Email: ${safe(email)}`, `Phone: ${safe(telephone)}`, `Page: ${safe(page)}`, `IP: ${safe(ip)}`, `User-Agent: ${safe(userAgent)}`, `reCAPTCHA: ${recaptcha ? `score=${recaptcha.score} action=${recaptcha.action} success=${recaptcha.success}` : "n/a"}`, ``, `Message:`, safe(message)].join("\n");
-
-    const res = await fetch("https://api.resend.com/emails", { method: "POST", headers: { "Authorization": `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: env.EMAIL_FROM, to: env.EMAIL_TO, reply_to: safe(email) || undefined, subject, text }) });
-    if (!res.ok) { const err = await res.text().catch(() => ""); return new Response(`Email failed: ${err}`, { status: 502, headers }); }
-
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { ...headers, "Content-Type": "application/json" } });
-  },
+    return new Response("Not found", { status: 404, headers: corsHeaders() });
+  }
 };
+
+async function handleSend(request, env) {
+  const cors = corsHeaders();
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "Invalid JSON" }, 400, cors);
+  }
+
+  const { emailType, firstName, lastName, email, telephone, message, meta } = body || {};
+
+  const missing = [];
+  if (!env.RESEND_API_KEY) missing.push("RESEND_API_KEY");
+  if (!env.EMAIL_TO) missing.push("EMAIL_TO");
+  if (!env.EMAIL_FROM) missing.push("EMAIL_FROM");
+  if (missing.length) return json({ ok: false, error: "Missing Worker env vars", missing }, 500, cors);
+
+  const subject = `[Contact] ${emailType || "Message"} — ${firstName || ""} ${lastName || ""}`.trim();
+  const text = [
+    `Reason: ${emailType || ""}`,
+    `Name: ${(firstName || "").trim()} ${(lastName || "").trim()}`.trim(),
+    `Email: ${email || ""}`,
+    `Phone: ${telephone || ""}`,
+    ``,
+    `Message:`,
+    `${message || ""}`,
+    ``,
+    `--- meta ---`,
+    `IP: ${meta?.ip || ""}`,
+    `UA: ${meta?.ua || ""}`,
+    `Referer: ${meta?.referer || ""}`,
+    `Timestamp: ${meta?.timestamp || ""}`
+  ].join("\n");
+
+  const html = `
+    <h2>New Contact Form Submission</h2>
+    <p><strong>Reason:</strong> ${escapeHtml(emailType || "")}</p>
+    <p><strong>Name:</strong> ${escapeHtml(`${firstName || ""} ${lastName || ""}`.trim())}</p>
+    <p><strong>Email:</strong> ${escapeHtml(email || "")}</p>
+    <p><strong>Phone:</strong> ${escapeHtml(telephone || "")}</p>
+    <hr/>
+    <p><strong>Message</strong></p>
+    <pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(message || "")}</pre>
+    <hr/>
+    <p><strong>Meta</strong></p>
+    <pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(
+      JSON.stringify(meta || {}, null, 2)
+    )}</pre>
+  `;
+
+  const resendRes = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [env.EMAIL_TO],
+      reply_to: email ? [email] : undefined,
+      subject,
+      text,
+      html
+    })
+  });
+
+  if (!resendRes.ok) {
+    const detail = await resendRes.text().catch(() => "");
+    return json({ ok: false, error: "Resend failed", details: detail || String(resendRes.status) }, 502, cors);
+  }
+
+  const data = await resendRes.json().catch(() => ({}));
+  return json({ ok: true, id: data?.id }, 200, cors);
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+
+function json(obj, status = 200, headers = {}) {
+  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...headers } });
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
