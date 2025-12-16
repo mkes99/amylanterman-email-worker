@@ -9,6 +9,10 @@
 	"compatibility_date": "2025-12-16",
 	"observability": {
 		"enabled": true
+	},
+	"vars": {
+		"EMAIL_FROM": "no-reply@amylantermanart.com",
+		"EMAIL_TO": "info@amylantermanart.com"
 	}
 	/**
 	 * Smart Placement

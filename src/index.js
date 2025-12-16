@@ -57,12 +57,6 @@ async function handleSend(request, env) {
     <p><strong>Phone:</strong> ${escapeHtml(telephone || "")}</p>
     <hr/>
     <p><strong>Message</strong></p>
-    <pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(message || "")}</pre>
-    <hr/>
-    <p><strong>Meta</strong></p>
-    <pre style="white-space:pre-wrap;font-family:inherit;">${escapeHtml(
-      JSON.stringify(meta || {}, null, 2)
-    )}</pre>
   `;
 
   const resendRes = await fetch("https://api.resend.com/emails", {
